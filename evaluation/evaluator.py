@@ -14,6 +14,7 @@ LLM-as-Judge 是评测 Agent 质量的关键技术：
   人工标注成本高、主观性强；用 LLM 评判可以规模化、可重复。
 """
 import asyncio
+import hashlib
 import json
 import logging
 import pathlib
@@ -171,7 +172,7 @@ class IntentEvaluator:
             predictions.append(predicted)
             ground_truth.append(case.expected_intent)
             case_details.append({
-                "message": case.message,
+                "message_sha256": hashlib.sha256(case.message.encode("utf-8")).hexdigest(),
                 "expected": case.expected_intent,
                 "predicted": predicted,
                 "confidence": result.confidence,
@@ -360,16 +361,14 @@ class EndToEndEvaluator:
                     "helpfulness": scores.helpfulness,
                     "overall": scores.overall,
                 },
-                detail=f"Q: {question[:30]}... → 综合评分 {scores.overall:.3f}",
+                detail=f"第 {turn_idx + 1} 轮综合评分 {scores.overall:.3f}",
                 metadata={
-                    "question": question,
-                    "response": actual_answer,
+                    "question_sha256": hashlib.sha256(question.encode("utf-8")).hexdigest(),
                     "agent_type": orch_result.agent_type.value,
                     "intent": orch_result.intent.value if orch_result.intent else None,
                     "turn": turn_idx,
-                    "conv_id": conv_id,
+                    "conversation_sha256": hashlib.sha256(conv_id.encode("utf-8")).hexdigest(),
                     "judge_failed": scores.judge_failed,
-                    "judge_error": scores.error,
                 },
             ))
 
@@ -481,16 +480,28 @@ DEFAULT_INTENT_CASES: List[IntentTestCase] = [
     IntentTestCase("帮我取消订单",               "request"),
     IntentTestCase("你们服务太差了！",            "complaint"),
     IntentTestCase("应用一直报500错误",           "technical"),
-    IntentTestCase("为什么扣了两次款？",          "billing"),
+    IntentTestCase("我还有多少流量？",            "business_account_query"),
+    IntentTestCase("现在有哪些Demo套餐？",       "business_plan_query"),
+    IntentTestCase("一个月需要30GB，有推荐吗？",   "business_plan_recommendation"),
+    IntentTestCase("帮我换成79元套餐",             "business_plan_change"),
+    IntentTestCase("我要退订当前套餐",             "business_plan_unsubscribe"),
+    IntentTestCase("有哪些流量包？",               "business_product_query"),
+    IntentTestCase("给我购买30GB流量包",          "business_data_pack_purchase"),
+    IntentTestCase("购买300分钟语音包",            "business_voice_pack_purchase"),
+    IntentTestCase("帮我开通视频彩铃",              "business_vas_activation"),
+    IntentTestCase("给Demo账户充值100元",            "business_account_recharge"),
+    IntentTestCase("刚才的Demo交易成功了吗？",       "business_transaction_status"),
+    IntentTestCase("我想安装宽带",                  "business_broadband_query"),
+    IntentTestCase("我要开国际漫游",              "business_manual_service"),
     IntentTestCase("我要投诉，转人工！",          "escalation"),
     IntentTestCase("你好",                        "greeting"),
-    IntentTestCase("修改我的邮箱地址",            "account"),
 ]
 
 DEFAULT_DIALOG_CASES: List[Dict[str, Any]] = [
     {"question": "我的订单 #12345 还没到，已经超时了"},
     {"question": "应用登录一直报错 401"},
-    {"question": "为什么这个月多扣了 50 块钱？"},
+    {"question": "有哪些Demo套餐？"},
+    {"question": "我每月需要30GB流量，预算80元，有推荐吗？"},
     {"question": "帮我把收货地址改成北京市朝阳区"},
-    {"turns": ["你好，我想退款", "订单号是 #12345", "退款多久能到账？"]},
+    {"turns": ["有哪些流量包？", "我想购买30GB流量包"]},
 ]

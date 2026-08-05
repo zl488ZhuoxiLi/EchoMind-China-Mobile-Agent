@@ -1,0 +1,222 @@
+{
+  "schema_version": "1.1",
+  "source_type": "synthetic_demo",
+  "catalog_version": "1.0",
+  "region_scope": "demo_not_region_specific",
+  "users": [
+    {
+      "user_id": "demo_user_001",
+      "mobile_alias": "DEMO_MOBILE_001",
+      "account_status": "active",
+      "balance_cents": 20000,
+      "currency": "CNY",
+      "current_plan_id": "demo_plan_standard_59",
+      "remaining_data_mb": 8192,
+      "remaining_voice_minutes": 90,
+      "version": 1
+    },
+    {
+      "user_id": "demo_user_002",
+      "mobile_alias": "DEMO_MOBILE_002",
+      "account_status": "active",
+      "balance_cents": 800,
+      "currency": "CNY",
+      "current_plan_id": "demo_plan_basic_39",
+      "remaining_data_mb": 512,
+      "remaining_voice_minutes": 10,
+      "version": 1
+    },
+    {
+      "user_id": "demo_user_003",
+      "mobile_alias": "DEMO_MOBILE_003",
+      "account_status": "abnormal",
+      "balance_cents": 10000,
+      "currency": "CNY",
+      "current_plan_id": "demo_plan_plus_79",
+      "remaining_data_mb": 20480,
+      "remaining_voice_minutes": 200,
+      "version": 1
+    }
+  ],
+  "plans": [
+    {
+      "plan_id": "demo_plan_basic_39",
+      "name": "Demo 轻享套餐 39元",
+      "monthly_fee_cents": 3900,
+      "data_mb": 5120,
+      "voice_minutes": 100,
+      "directional_benefits": [],
+      "description": "含5GB国内通用流量和100分钟国内主叫，纯合成Demo套餐，不代表真实在售资费。",
+      "status": "active"
+    },
+    {
+      "plan_id": "demo_plan_standard_59",
+      "name": "Demo 畅享套餐 59元",
+      "monthly_fee_cents": 5900,
+      "data_mb": 15360,
+      "voice_minutes": 150,
+      "directional_benefits": [],
+      "description": "含15GB国内通用流量和150分钟国内主叫，纯合成Demo套餐，不代表真实在售资费。",
+      "status": "active"
+    },
+    {
+      "plan_id": "demo_plan_plus_79",
+      "name": "Demo 5G畅享套餐 79元",
+      "monthly_fee_cents": 7900,
+      "data_mb": 30720,
+      "voice_minutes": 300,
+      "directional_benefits": [
+        "Demo 视频应用定向流量10GB"
+      ],
+      "description": "含30GB国内通用流量、300分钟国内主叫和10GB Demo定向流量，纯合成Demo套餐。",
+      "status": "active"
+    },
+    {
+      "plan_id": "demo_plan_premium_99",
+      "name": "Demo 5G尊享套餐 99元",
+      "monthly_fee_cents": 9900,
+      "data_mb": 51200,
+      "voice_minutes": 500,
+      "directional_benefits": [
+        "Demo 视频应用定向流量20GB"
+      ],
+      "description": "含50GB国内通用流量、500分钟国内主叫和20GB Demo定向流量，纯合成Demo套餐。",
+      "status": "active"
+    }
+  ],
+  "products": [
+    {
+      "product_id": "demo_data_pack_1gb_7d",
+      "product_type": "data_pack",
+      "name": "Demo 1GB应急流量包",
+      "price_cents": 500,
+      "quota_mb": 1024,
+      "voice_minutes": null,
+      "validity_days": 7,
+      "billing_mode": "one_time",
+      "auto_renew": false,
+      "effective_rule": "immediate",
+      "repeat_purchase_allowed": true,
+      "description": "5元购买1GB国内通用流量，有效期7天，不自动续订。",
+      "status": "active"
+    },
+    {
+      "product_id": "demo_data_pack_10gb_30d",
+      "product_type": "data_pack",
+      "name": "Demo 10GB流量包",
+      "price_cents": 2000,
+      "quota_mb": 10240,
+      "voice_minutes": null,
+      "validity_days": 30,
+      "billing_mode": "one_time",
+      "auto_renew": false,
+      "effective_rule": "immediate",
+      "repeat_purchase_allowed": true,
+      "description": "20元购买10GB国内通用流量，有效期30天，不自动续订。",
+      "status": "active"
+    },
+    {
+      "product_id": "demo_data_pack_30gb_30d",
+      "product_type": "data_pack",
+      "name": "Demo 30GB流量包",
+      "price_cents": 5000,
+      "quota_mb": 30720,
+      "voice_minutes": null,
+      "validity_days": 30,
+      "billing_mode": "one_time",
+      "auto_renew": false,
+      "effective_rule": "immediate",
+      "repeat_purchase_allowed": true,
+      "description": "50元购买30GB国内通用流量，有效期30天，不自动续订。",
+      "status": "active"
+    },
+    {
+      "product_id": "demo_voice_pack_100min_30d",
+      "product_type": "voice_pack",
+      "name": "Demo 100分钟语音包",
+      "price_cents": 1000,
+      "quota_mb": null,
+      "voice_minutes": 100,
+      "validity_days": 30,
+      "billing_mode": "one_time",
+      "auto_renew": false,
+      "effective_rule": "immediate",
+      "repeat_purchase_allowed": true,
+      "description": "10元购买100分钟国内主叫，有效期30天，不自动续订。",
+      "status": "active"
+    },
+    {
+      "product_id": "demo_voice_pack_300min_30d",
+      "product_type": "voice_pack",
+      "name": "Demo 300分钟语音包",
+      "price_cents": 2500,
+      "quota_mb": null,
+      "voice_minutes": 300,
+      "validity_days": 30,
+      "billing_mode": "one_time",
+      "auto_renew": false,
+      "effective_rule": "immediate",
+      "repeat_purchase_allowed": true,
+      "description": "25元购买300分钟国内主叫，有效期30天，不自动续订。",
+      "status": "active"
+    },
+    {
+      "product_id": "demo_vas_video_ringtone",
+      "product_type": "vas",
+      "name": "Demo 视频彩铃",
+      "price_cents": 500,
+      "quota_mb": null,
+      "voice_minutes": null,
+      "validity_days": null,
+      "billing_mode": "monthly_recurring",
+      "auto_renew": true,
+      "effective_rule": "immediate",
+      "repeat_purchase_allowed": false,
+      "description": "5元/月，立即生效并建立Demo按月续订关系；首期不运行跨月扣费任务。",
+      "status": "active"
+    },
+    {
+      "product_id": "demo_vas_missed_call_alert",
+      "product_type": "vas",
+      "name": "Demo 来电提醒",
+      "price_cents": 300,
+      "quota_mb": null,
+      "voice_minutes": null,
+      "validity_days": null,
+      "billing_mode": "monthly_recurring",
+      "auto_renew": true,
+      "effective_rule": "immediate",
+      "repeat_purchase_allowed": false,
+      "description": "3元/月，立即生效并建立Demo按月续订关系；首期不运行跨月扣费任务。",
+      "status": "active"
+    }
+  ],
+  "subscriptions": [],
+  "transactions": [],
+  "mock_tokens": [
+    {
+      "token_value": "DEMO_TOKEN_USER_001",
+      "user_id": "demo_user_001",
+      "status": "active",
+      "expires_at": null
+    },
+    {
+      "token_value": "DEMO_TOKEN_USER_002",
+      "user_id": "demo_user_002",
+      "status": "active",
+      "expires_at": null
+    },
+    {
+      "token_value": "DEMO_TOKEN_USER_003",
+      "user_id": "demo_user_003",
+      "status": "active",
+      "expires_at": null
+    },
+    {
+      "token_value": "DEMO_TOKEN_REVOKED_002",
+      "user_id": "demo_user_002",
+      "status": "revoked",
+      "expires_at": null
+    }
+  ]
+}

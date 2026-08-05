@@ -7,7 +7,7 @@ EchoMind 启动时会从 `ECHOMIND_SKILLS_DIR` 读取 Skills，并在匹配用�
 ```text
 skills/general_customer_service/SKILL.md  # 通用客服：接待、澄清、分流、投诉和转人工
 skills/technical_support/SKILL.md         # 技术支持：故障排查、接口错误、部署配置和安全边界
-skills/billing_support/SKILL.md           # 账单服务：扣款、退款、发票、订阅和财务审核
+skills/business_service/SKILL.md          # 移动业务：套餐、资源包、增值业务和Demo账户
 ```
 
 ## Skill 文件格式
@@ -35,7 +35,7 @@ enabled: true
 - `name`：Skill 展示名称，会出现在注入给模型的 prompt 中。
 - `description`：简短说明，方便 `/skills` 接口排查。
 - `keywords`：触发关键词，用户消息命中后才注入；多个关键词用英文逗号或中文逗号分隔均可。
-- `agents`：适用 Agent，可填 `general`、`technical`、`billing`，多个值用逗号分隔。
+- `agents`：适用 Agent，可填 `general`、`technical`、`business_agent`，多个值用逗号分隔。
 - `enabled`：是否启用，支持 `true/false`。
 
 ## 编写要求
