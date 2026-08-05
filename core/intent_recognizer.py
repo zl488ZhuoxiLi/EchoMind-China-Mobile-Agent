@@ -13,6 +13,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -30,8 +31,19 @@ class IntentCategory(Enum):
     GREETING   = "greeting"    # 问候
     ESCALATION = "escalation"  # 要求升级/转人工
     TECHNICAL  = "technical"   # 技术问题
-    BILLING    = "billing"     # 账单/退款
-    ACCOUNT    = "account"     # 账户管理
+    BUSINESS_ACCOUNT_QUERY = "business_account_query"
+    BUSINESS_PLAN_QUERY = "business_plan_query"
+    BUSINESS_PLAN_RECOMMENDATION = "business_plan_recommendation"
+    BUSINESS_PLAN_CHANGE = "business_plan_change"
+    BUSINESS_PLAN_UNSUBSCRIBE = "business_plan_unsubscribe"
+    BUSINESS_PRODUCT_QUERY = "business_product_query"
+    BUSINESS_DATA_PACK_PURCHASE = "business_data_pack_purchase"
+    BUSINESS_VOICE_PACK_PURCHASE = "business_voice_pack_purchase"
+    BUSINESS_VAS_ACTIVATION = "business_vas_activation"
+    BUSINESS_ACCOUNT_RECHARGE = "business_account_recharge"
+    BUSINESS_TRANSACTION_STATUS = "business_transaction_status"
+    BUSINESS_BROADBAND_QUERY = "business_broadband_query"
+    BUSINESS_MANUAL_SERVICE = "business_manual_service"
     FEEDBACK   = "feedback"    # 正面反馈
     OTHER      = "other"
 
@@ -61,8 +73,19 @@ _TEMPLATES: Dict[IntentCategory, List[str]] = {
     IntentCategory.GREETING:   ["你好", "嗨，有人吗", "早上好"],
     IntentCategory.ESCALATION: ["我要投诉！", "转人工客服", "找你们经理"],
     IntentCategory.TECHNICAL:  ["应用一直崩溃", "无法登录", "出现500错误"],
-    IntentCategory.BILLING:    ["为什么扣了两次款？", "申请退款", "发票问题"],
-    IntentCategory.ACCOUNT:    ["修改邮箱", "注销账户", "更新个人信息"],
+    IntentCategory.BUSINESS_ACCOUNT_QUERY: ["我还有多少流量？", "我的余额是多少？", "当前是什么套餐？"],
+    IntentCategory.BUSINESS_PLAN_QUERY: ["有哪些Demo套餐？", "59元套餐包含什么？"],
+    IntentCategory.BUSINESS_PLAN_RECOMMENDATION: ["我每月需要30GB，有推荐吗？", "想换便宜一点的套餐"],
+    IntentCategory.BUSINESS_PLAN_CHANGE: ["帮我换成Demo 79元套餐", "我要变更套餐"],
+    IntentCategory.BUSINESS_PLAN_UNSUBSCRIBE: ["我要退订当前套餐"],
+    IntentCategory.BUSINESS_PRODUCT_QUERY: ["有哪些流量包？", "有什么语音包？"],
+    IntentCategory.BUSINESS_DATA_PACK_PURCHASE: ["给我购买30GB流量包"],
+    IntentCategory.BUSINESS_VOICE_PACK_PURCHASE: ["购买300分钟语音包"],
+    IntentCategory.BUSINESS_VAS_ACTIVATION: ["开通视频彩铃"],
+    IntentCategory.BUSINESS_ACCOUNT_RECHARGE: ["给Demo账户充值100元"],
+    IntentCategory.BUSINESS_TRANSACTION_STATUS: ["刚才的办理成功了吗？"],
+    IntentCategory.BUSINESS_BROADBAND_QUERY: ["我想了解宽带安装"],
+    IntentCategory.BUSINESS_MANUAL_SERVICE: ["我要注销号码", "帮我开国际漫游"],
     IntentCategory.FEEDBACK:   ["服务很棒！", "非常满意", "给个好评"],
 }
 
@@ -80,6 +103,81 @@ def _cosine(a: List[float], b: List[float]) -> float:
     na  = sum(x * x for x in a) ** 0.5
     nb  = sum(x * x for x in b) ** 0.5
     return dot / (na * nb) if na and nb else 0.0
+
+
+BUSINESS_INTENTS = frozenset(
+    intent for intent in IntentCategory if intent.value.startswith("business_")
+)
+
+
+def classify_business_intent(message: str) -> Optional[IntentCategory]:
+    """确定性识别首期移动业务，安全相关写请求不依赖 LLM 路由。"""
+    msg = re.sub(r"\s+", "", (message or "").lower())
+    if not msg:
+        return None
+
+    if any(word in msg for word in ("人工客服", "转人工", "投诉")):
+        return None
+
+    manual_words = (
+        "注销号码", "销户", "新开户", "新手机号", "停机保号", "国际漫游",
+        "宽带移机", "迁移宽带", "实名认证", "身份认证", "退款", "重复扣款", "账单争议",
+    )
+    if any(word in msg for word in manual_words) or (
+        "宽带" in msg and any(word in msg for word in ("迁移", "移机", "换地址"))
+    ):
+        return IntentCategory.BUSINESS_MANUAL_SERVICE
+
+    if "宽带" in msg:
+        return IntentCategory.BUSINESS_BROADBAND_QUERY
+
+    if any(word in msg for word in ("刚才办", "刚才买", "办理成功", "购买成功", "交易成功", "交易状态", "处理状态")):
+        return IntentCategory.BUSINESS_TRANSACTION_STATUS
+
+    if "充值" in msg or re.search(r"充(?:值)?\d+(?:\.\d+)?元", msg):
+        return IntentCategory.BUSINESS_ACCOUNT_RECHARGE
+
+    if any(word in msg for word in ("退订当前套餐", "退订套餐", "取消当前套餐", "取消套餐")):
+        return IntentCategory.BUSINESS_PLAN_UNSUBSCRIBE
+
+    action = any(word in msg for word in ("购买", "买", "办理", "开通", "给我开", "帮我开", "帮我换", "换成", "变更为"))
+    if action and ("流量包" in msg or re.search(r"\d+(?:\.\d+)?g(?:b)?流量", msg)):
+        return IntentCategory.BUSINESS_DATA_PACK_PURCHASE
+    if action and ("语音包" in msg or re.search(r"\d+分钟", msg)):
+        return IntentCategory.BUSINESS_VOICE_PACK_PURCHASE
+    if action and any(word in msg for word in ("视频彩铃", "彩铃", "来电提醒", "增值业务")):
+        return IntentCategory.BUSINESS_VAS_ACTIVATION
+
+    if any(word in msg for word in ("更换套餐", "变更套餐", "换套餐", "换成", "就这个套餐", "按这个方案办理")) or (
+        "套餐" in msg and any(word in msg for word in ("办理新", "办理一个", "换一个"))
+    ):
+        return IntentCategory.BUSINESS_PLAN_CHANGE
+
+    if any(word in msg for word in ("推荐套餐", "套餐推荐", "适合我的套餐", "套餐太贵", "便宜一点")) or (
+        "套餐" in msg and any(word in msg for word in ("预算", "每月需要", "一个月需要", "推荐"))
+    ) or (
+        "推荐" in msg and re.search(r"\d+(?:\.\d+)?g(?:b)?", msg)
+    ):
+        return IntentCategory.BUSINESS_PLAN_RECOMMENDATION
+
+    if any(word in msg for word in ("有什么流量包", "有哪些流量包", "流量包介绍", "有什么语音包", "有哪些语音包", "增值业务有哪些")):
+        return IntentCategory.BUSINESS_PRODUCT_QUERY
+
+    if any(word in msg for word in ("有哪些套餐", "有什么套餐", "套餐列表", "套餐详情", "5g套餐")) or (
+        "套餐" in msg and any(word in msg for word in ("有哪些", "有什么", "都有什么", "介绍一下"))
+    ) or re.search(r"\d+元套餐", msg):
+        return IntentCategory.BUSINESS_PLAN_QUERY
+
+    account_phrases = (
+        "账户情况", "账户信息", "当前套餐", "现在是什么套餐", "我的套餐", "话费余额",
+        "我的余额", "余额还有多少", "还有多少流量", "剩余流量", "流量还剩", "通话分钟还剩", "剩余通话",
+    )
+    if any(word in msg for word in account_phrases):
+        return IntentCategory.BUSINESS_ACCOUNT_QUERY
+
+    if any(word in msg for word in ("流量包", "语音包", "视频彩铃", "来电提醒")):
+        return IntentCategory.BUSINESS_PRODUCT_QUERY
+    return None
 
 
 class IntentRecognizer:
@@ -132,6 +230,19 @@ class IntentRecognizer:
         self.cache_misses += 1
 
         t0 = time.monotonic()
+
+        business_intent = classify_business_intent(message)
+        if business_intent is not None:
+            result = IntentResult(
+                intent=business_intent,
+                confidence=0.99,
+                urgency=self._urgency(message, business_intent),
+                entities={},
+                reasoning="命中已确认的移动业务确定性路由规则",
+                latency_ms=(time.monotonic() - t0) * 1000,
+            )
+            self._cache[key] = result
+            return result
 
         # LLM 和 Embedding 并行（Embedding 不可用时跳过）
         llm_task = asyncio.create_task(self._llm_recognize(message, history))
@@ -254,9 +365,7 @@ class IntentRecognizer:
             IntentCategory.QUERY:      ["?", "？", "怎么", "什么", "status"],
             IntentCategory.REQUEST:    ["帮我", "需要", "please", "help"],
             IntentCategory.GREETING:   ["你好", "嗨", "hello", "hi"],
-            IntentCategory.BILLING:    ["退款", "扣款", "发票", "refund"],
             IntentCategory.TECHNICAL:  ["崩溃", "报错", "error", "crash"],
-            IntentCategory.ACCOUNT:    ["密码", "邮箱", "账户", "password"],
         }
         best_cat, best_score = IntentCategory.OTHER, 0.0
         for cat, kws in patterns.items():

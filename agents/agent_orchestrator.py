@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional
 
 from anthropic import AsyncAnthropic
 
-from core.intent_recognizer import IntentCategory, IntentRecognizer, UrgencyLevel
+from core.intent_recognizer import BUSINESS_INTENTS, IntentCategory, IntentRecognizer, UrgencyLevel
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 class AgentType(Enum):
     GENERAL   = "general"    # 通用客服
     TECHNICAL = "technical"  # 技术支持
-    BILLING   = "billing"    # 账单/退款
+    BUSINESS  = "business_agent"  # 移动业务办理与套餐服务
     ESCALATION = "escalation" # 人工升级（占位）
 
 
@@ -81,6 +81,7 @@ class Request:
     history:     Optional[List[Dict[str, str]]] = None  # 对话历史，传给意图识别
     intent:      Optional[IntentCategory] = None
     urgency:     Optional[UrgencyLevel]   = None
+    auth_context: Optional[Any] = None    # 已在 HTTP 边界验证，不包含原始 Token
     request_id:  str = field(default_factory=lambda: str(uuid.uuid4())[:8])
 
 
@@ -184,12 +185,56 @@ class TechnicalAgent(BaseAgent):
     )
 
 
-class BillingAgent(BaseAgent):
-    agent_type    = AgentType.BILLING
+class BusinessAgent(BaseAgent):
+    agent_type    = AgentType.BUSINESS
     system_prompt = (
-        "你是账单服务专家。专注于：账单查询、退款申请、发票问题、订阅管理。"
-        "对财务问题保持准确和专业。涉及实际退款操作时，说明需要人工审核。"
+        "你是耐心、专业、温和的移动业务顾问，负责套餐、流量包、语音包、增值业务和Demo账户服务。"
+        "不虚构资费，不强推业务；个人账户查询和写操作必须由受信任执行层处理。"
     )
+
+    def __init__(self, client: AsyncAnthropic, model: str, skill_manager: Optional[Any] = None,
+                 business_service: Optional[Any] = None):
+        super().__init__(client, model, skill_manager)
+        self._business_service = business_service
+
+    async def handle(self, req: Request) -> AgentResponse:
+        t0 = time.monotonic()
+        self.stats.total += 1
+        if self._business_service is None:
+            ms = (time.monotonic() - t0) * 1000
+            self.stats.total_ms += ms
+            return AgentResponse(
+                agent_type=self.agent_type,
+                content="Demo 移动业务服务尚未初始化，请稍后重试。",
+                success=False,
+                latency_ms=ms,
+            )
+        try:
+            result = await self._business_service.handle(req)
+            req.intent = result.intent
+            ms = (time.monotonic() - t0) * 1000
+            self.stats.total_ms += ms
+            # Monitor 的 Agent success 表示处理链路正常完成；余额不足、未登录等
+            # 可预期业务拒绝是正确响应，不应被计为 Agent 运行失败。
+            self.stats.success += 1
+            return AgentResponse(
+                agent_type=self.agent_type,
+                content=result.content,
+                success=result.success,
+                latency_ms=ms,
+                escalate=result.escalated,
+            )
+        except Exception as ex:
+            ms = (time.monotonic() - t0) * 1000
+            self.stats.total_ms += ms
+            logger.error("BusinessAgent 处理失败: %s", ex)
+            return AgentResponse(
+                agent_type=self.agent_type,
+                content="Demo 移动业务处理异常，当前为 Demo 人工介入标记，未创建真实工单。",
+                success=False,
+                latency_ms=ms,
+                escalate=True,
+            )
 
 
 # ── 编排器 ────────────────────────────────────────────────────────────────────
@@ -207,8 +252,7 @@ class AgentOrchestrator:
     # 意图 → Agent 类型的静态映射（路由表）
     _INTENT_ROUTING: Dict[IntentCategory, AgentType] = {
         IntentCategory.TECHNICAL:  AgentType.TECHNICAL,
-        IntentCategory.BILLING:    AgentType.BILLING,
-        IntentCategory.ACCOUNT:    AgentType.BILLING,
+        **{intent: AgentType.BUSINESS for intent in BUSINESS_INTENTS},
         IntentCategory.ESCALATION: AgentType.ESCALATION,
         # 其余意图 → GENERAL（默认）
     }
@@ -219,6 +263,7 @@ class AgentOrchestrator:
         base_url: Optional[str] = None,
         model:    str = "claude-3-5-sonnet-20241022",
         skill_manager: Optional[Any] = None,
+        business_service: Optional[Any] = None,
     ):
         kwargs: Dict[str, Any] = {"api_key": api_key}
         if base_url:
@@ -227,12 +272,13 @@ class AgentOrchestrator:
 
         self._intent_recognizer = IntentRecognizer(api_key=api_key, base_url=base_url, model=model)
         self._skill_manager = skill_manager
+        self._business_service = business_service
 
         # Agent 池：每种类型可有多个实例（水平扩展）
         self._pool: Dict[AgentType, List[BaseAgent]] = {
             AgentType.GENERAL:   [GeneralAgent(client, model, skill_manager)],
             AgentType.TECHNICAL: [TechnicalAgent(client, model, skill_manager)],
-            AgentType.BILLING:   [BillingAgent(client, model, skill_manager)],
+            AgentType.BUSINESS:  [BusinessAgent(client, model, skill_manager, business_service)],
         }
 
     def set_skill_manager(self, skill_manager: Optional[Any]) -> None:
@@ -242,6 +288,13 @@ class AgentOrchestrator:
             for agent in agents:
                 agent._skill_manager = skill_manager
 
+    def set_business_service(self, business_service: Optional[Any]) -> None:
+        """在 Tool Manager 初始化后注入确定性业务服务。"""
+        self._business_service = business_service
+        for agent in self._pool.get(AgentType.BUSINESS, []):
+            if isinstance(agent, BusinessAgent):
+                agent._business_service = business_service
+
     # ── 主入口 ────────────────────────────────────────────────────────────────
 
     async def run(self, req: Request) -> OrchestratorResult:
@@ -250,6 +303,21 @@ class AgentOrchestrator:
           意图识别 → 路由选 Agent → 执行 → 检查升级 → 返回结果
         """
         t0 = time.monotonic()
+
+        # 下一轮确认必须优先回到 BusinessAgent，不再次交给 LLM 判断。
+        if self._business_service is not None and req.auth_context is not None:
+            has_pending = await self._business_service.has_pending(req.auth_context, req.conv_id)
+            if has_pending or self._business_service.is_confirmation_reply(req.message):
+                req.intent = req.intent or IntentCategory.BUSINESS_TRANSACTION_STATUS
+                response = await self._execute(req, AgentType.BUSINESS)
+                return OrchestratorResult(
+                    request_id=req.request_id,
+                    response=response.content,
+                    agent_type=response.agent_type,
+                    intent=req.intent,
+                    escalated=response.escalate,
+                    latency_ms=(time.monotonic() - t0) * 1000,
+                )
 
         # 1. 意图识别（如果调用方已识别则跳过）
         if req.intent is None:
@@ -336,18 +404,14 @@ class AgentOrchestrator:
         判断是否需要多个 Agent 并行协作。
 
         意图识别通常只返回一个主意图；这里用领域关键词补充检测复合问题，
-        例如"登录报错且被重复扣款"需要技术和账单 Agent 同时处理。
+        当前 BusinessAgent 垂直切片保持单主 Agent；多 Agent 协作留到后续阶段。
         """
         msg = req.message.lower()
         targets: List[AgentType] = []
 
         technical_kws = ["崩溃", "报错", "error", "crash", "无法登录", "登录失败", "500", "401"]
-        billing_kws = ["退款", "扣款", "发票", "账单", "支付", "订阅", "refund", "invoice"]
-
         if req.intent == IntentCategory.TECHNICAL or any(kw in msg for kw in technical_kws):
             targets.append(AgentType.TECHNICAL)
-        if req.intent in (IntentCategory.BILLING, IntentCategory.ACCOUNT) or any(kw in msg for kw in billing_kws):
-            targets.append(AgentType.BILLING)
 
         # 保持顺序去重，并只返回当前有实例的 Agent 类型。
         deduped = list(dict.fromkeys(targets))
@@ -378,7 +442,7 @@ class AgentOrchestrator:
         response = await agent.handle(req)
 
         # 专属 Agent 失败时降级到 GeneralAgent
-        if not response.success and agent_type != AgentType.GENERAL:
+        if not response.success and agent_type not in {AgentType.GENERAL, AgentType.BUSINESS}:
             logger.warning(f"{agent_type.value} 失败，降级到 GeneralAgent")
             fallback = self._best_agent(AgentType.GENERAL)
             if fallback:

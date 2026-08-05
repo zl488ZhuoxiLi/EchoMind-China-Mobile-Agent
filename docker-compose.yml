@@ -82,11 +82,14 @@ services:
       # 容器内固定值，覆盖 .env 中的本地路径
       - REDIS_URL=redis://:${REDIS_PASSWORD:-echomind123}@redis:6379/0
       - CHROMA_PERSIST_DIRECTORY=/app/data/chroma
-      - EVAL_BASELINE_PATH=/app/data/eval/baseline.json
+      - EVAL_BASELINE_PATH=/app/data/eval/business_agent_baseline.json
       - ECHOMIND_SKILLS_DIR=/app/skills
+      - MOCK_CRM_SEED_PATH=/app/data/demo_crm/mock_crm.json
+      - MOCK_CRM_DATA_PATH=/app/data/demo_crm/runtime/mock_crm.json
     volumes:
       - ./data/chroma:/app/data/chroma
       - ./data/eval:/app/data/eval
+      - ./data/demo_crm/runtime:/app/data/demo_crm/runtime
       - ./skills:/app/skills
       - ./logs:/app/logs
     depends_on:
@@ -120,7 +123,7 @@ services:
     networks:
       - echomind-network
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost/health || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

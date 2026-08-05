@@ -5,6 +5,7 @@ EchoMind 智能客服系统 — FastAPI 入口
 所有核心组件在 lifespan 中初始化，通过环境变量配置。
 """
 import asyncio
+import hashlib
 import logging
 import os
 import pathlib
@@ -21,7 +22,7 @@ if _ROOT not in sys.path:
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Response, UploadFile, File
+from fastapi import FastAPI, Header, HTTPException, Response, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
@@ -50,6 +51,7 @@ _tool_manager = None
 _monitor      = None
 _evaluator    = None
 _skill_manager = None
+_business_service = None
 
 
 def _anthropic_cfg() -> Dict[str, Any]:
@@ -68,7 +70,7 @@ def _anthropic_cfg() -> Dict[str, Any]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _orchestrator, _memory, _tool_manager, _monitor, _evaluator, _skill_manager
+    global _orchestrator, _memory, _tool_manager, _monitor, _evaluator, _skill_manager, _business_service
 
     print(BANNER, flush=True)
 
@@ -157,6 +159,24 @@ async def lifespan(app: FastAPI):
         supports_rerank=True,
         fallback=knowledge_fallback,
     ))
+
+    # BusinessAgent：公开静态 Mock Token + 纯合成 CRM + Redis 两轮确认。
+    from core.business_service import BusinessService
+    from mcp.mock_crm import MockCRMBackend, RedisConfirmationStore, register_mock_crm_tools
+
+    confirmation_store = RedisConfirmationStore(os.getenv("REDIS_URL", "redis://redis:6379/0"))
+    crm_backend = MockCRMBackend(
+        seed_path=os.getenv("MOCK_CRM_SEED_PATH", str(pathlib.Path(_ROOT) / "data/demo_crm/mock_crm.json")),
+        runtime_path=os.getenv(
+            "MOCK_CRM_DATA_PATH",
+            str(pathlib.Path(_ROOT) / "data/demo_crm/runtime/mock_crm.json"),
+        ),
+        confirmations=confirmation_store,
+    )
+    await crm_backend.initialize()
+    register_mock_crm_tools(_tool_manager, crm_backend)
+    _business_service = BusinessService(_tool_manager, crm_backend, confirmation_store)
+    _orchestrator.set_business_service(_business_service)
 
     # 性能监控（可选启动 Prometheus）
     prom_port = int(os.getenv("PROMETHEUS_PORT", "0")) or None
@@ -247,12 +267,12 @@ async def reload_skills():
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, authorization: Optional[str] = Header(default=None, alias="Authorization")):
     """
     主对话接口。完整流程：
-      记忆读取 → 意图识别 → Agent 路由 → 执行 → 记忆写入
+      Mock Token 验证 → Business 安全分流或通用 Memory/RAG → Agent 路由 → 执行
     """
-    if _orchestrator is None or _memory is None:
+    if _orchestrator is None or _memory is None or _business_service is None:
         raise HTTPException(503, "服务未就绪")
 
     from agents.agent_orchestrator import Request as OrcReq
@@ -260,20 +280,36 @@ async def chat(req: ChatRequest):
 
     conv_id = req.conv_id or str(uuid.uuid4())
 
-    # 1. 读取记忆上下文
-    mem_ctx = await _memory.get_context(req.user_id, conv_id, query=req.message)
+    # Mock Token 只在 HTTP 边界读取；后续链路只传验证结果，不传原始 Header。
+    auth_context = await _business_service.authenticate_header(authorization)
+    if auth_context.authenticated and req.user_id not in {"anonymous", auth_context.user_id}:
+        raise HTTPException(403, "请求 user_id 与 Mock Token 绑定用户不一致")
+    memory_user_id = _anonymous_memory_id(auth_context.user_id or req.user_id, conv_id)
 
-    # 2. 构建编排请求（含对话历史，用于意图识别上下文）
-    history = [
-        {"role": m.role.value, "content": m.content}
-        for m in mem_ctx.recent_messages[-5:]
-    ] if mem_ctx.recent_messages else None
+    # Business 请求和待确认轮次完全绕开通用 Memory/RAG，避免精确账户数据进入外部 LLM。
+    from core.intent_recognizer import classify_business_intent
+    business_path = classify_business_intent(req.message) is not None
+    if not business_path:
+        business_path = _business_service.is_confirmation_reply(req.message)
+    if not business_path:
+        business_path = await _business_service.has_pending(auth_context, conv_id)
 
-    knowledge_text, knowledge_used = await _build_knowledge_context(req.message)
-    context_parts = [mem_ctx.to_prompt_text()]
-    if knowledge_text:
-        context_parts.append(knowledge_text)
-    full_context = "\n\n".join(part for part in context_parts if part)
+    if business_path:
+        history = None
+        full_context = ""
+        knowledge_used = False
+    else:
+        # 1. 读取通用客服记忆上下文
+        mem_ctx = await _memory.get_context(memory_user_id, conv_id, query=req.message)
+        history = [
+            {"role": m.role.value, "content": m.content}
+            for m in mem_ctx.recent_messages[-5:]
+        ] if mem_ctx.recent_messages else None
+        knowledge_text, knowledge_used = await _build_knowledge_context(req.message)
+        context_parts = [mem_ctx.to_prompt_text()]
+        if knowledge_text:
+            context_parts.append(knowledge_text)
+        full_context = "\n\n".join(part for part in context_parts if part)
 
     orch_req = OrcReq(
         message=req.message,
@@ -281,17 +317,19 @@ async def chat(req: ChatRequest):
         conv_id=conv_id,
         context=full_context,
         history=history,
+        auth_context=auth_context,
     )
 
     # 3. 执行
     result = await _orchestrator.run(orch_req)
 
     # 4. 写入记忆
-    await _memory.add_message(req.user_id, conv_id, MsgRole.USER, req.message)
-    await _memory.add_message(req.user_id, conv_id, MsgRole.ASSISTANT, result.response)
-
-    # 5. 异步更新用户画像（不阻塞响应）
-    asyncio.create_task(_memory.update_profile(req.user_id, conv_id))
+    # Business 精确账户结果不进入一般会话 Memory 或用户画像；确认状态由专用 Redis key 管理。
+    from agents.agent_orchestrator import AgentType
+    if result.agent_type != AgentType.BUSINESS:
+        await _memory.add_message(memory_user_id, conv_id, MsgRole.USER, req.message)
+        await _memory.add_message(memory_user_id, conv_id, MsgRole.ASSISTANT, result.response)
+        asyncio.create_task(_memory.update_profile(memory_user_id, conv_id))
 
     return ChatResponse(
         conv_id=conv_id,
@@ -311,6 +349,9 @@ async def _build_knowledge_context(message: str, top_k: int = 3) -> tuple[str, b
     这里复用 MCPToolManager 的查询改写、并行召回、重排、fallback 能力。
     """
     if _tool_manager is None:
+        return "", False
+    from core.intent_recognizer import classify_business_intent
+    if classify_business_intent(message) is not None:
         return "", False
     if not _should_use_knowledge(message):
         return "", False
@@ -355,6 +396,12 @@ def _should_use_knowledge(message: str) -> bool:
         "refund", "order", "invoice", "payment", "error", "login",
     ]
     return len(msg) >= 4 or any(kw in msg for kw in business_keywords)
+
+
+def _anonymous_memory_id(source_id: str, conv_id: str) -> str:
+    """会话级匿名标识；不把 Mock CRM user_id 写入一般 Memory。"""
+    digest = hashlib.sha256(f"{source_id}:{conv_id}".encode("utf-8")).hexdigest()[:16]
+    return f"anon_{digest}"
 
 
 @app.get("/monitor")

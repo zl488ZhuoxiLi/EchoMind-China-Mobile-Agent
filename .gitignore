@@ -12,6 +12,7 @@ venv/
 
 # 运行期数据
 data/chroma/
+data/demo_crm/runtime/
 *.sqlite3
 logs/
 
